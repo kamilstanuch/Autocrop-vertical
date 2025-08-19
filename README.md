@@ -43,26 +43,46 @@ This script is built on a pipeline that uses specialized libraries for each step
 
 ---
 
-### Usage
+### Quick Start
 
-1.  **Clone the repository:**
+1.  **Install uv (Python package manager):**
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+    or (Windows)
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+2.  **Clone the repository:**
     ```bash
     git clone https://github.com/kamilstanuch/AutoCrop-Vertical.git
     cd AutoCrop-Vertical
     ```
 
-2.  **Set up the environment:**
-    A Python virtual environment is recommended.
+3.  **Run the script:**
+    The script is self-contained uv script that automatically handles dependencies.
+    To run it make it executable and run directly:
+    ```bash
+    chmod +x main.py
+    ./main.py --input path/to/horizontal_video.mp4 --output path/to/vertical_video.mp4
+    ```
+
+    The `yolov8n.pt` model weights will be downloaded automatically on the first run.
+
+---
+
+### For Developers
+
+If you prefer to use traditional Python virtual environments:
+
+1.  **Set up the environment:**
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
     pip install -r requirements.txt
     ```
-    The `yolov8n.pt` model weights will be downloaded automatically on the first run.
 
-3.  **Run the script:**
-    Use the `--input` and `--output` arguments to specify the source and destination files.
-
+2.  **Run the script:**
     ```bash
     python main.py --input path/to/horizontal_video.mp4 --output path/to/vertical_video.mp4
     ```
@@ -71,5 +91,5 @@ This script is built on a pipeline that uses specialized libraries for each step
 
 ### Prerequisites
 
-*   Python 3.8+
+*   **uv:** The recommended Python package manager for this project. Install with the one-liner above.
 *   **FFmpeg:** This script requires `ffmpeg` to be installed and available in your system's PATH. It can be installed via a package manager (e.g., `brew install ffmpeg` on macOS, `sudo apt install ffmpeg` on Debian/Ubuntu).
