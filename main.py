@@ -1,3 +1,19 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# name = ""
+# version = "0.0.1"
+# dependencies = [
+#   "opencv-python",
+#   "scenedetect[opencv]",
+#   "ultralytics",
+#   "torch",
+#   "torchvision",
+#   "tqdm",
+#   "numpy",
+# ]
+# ///
+
 import time
 import cv2
 import scenedetect
