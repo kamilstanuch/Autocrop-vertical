@@ -1,0 +1,6 @@
+opencv-python
+scenedetect[opencv]
+ultralytics
+torch
+torchvision
+moviepy==1.0.3
