@@ -1,6 +1,8 @@
-# IntelliCrop: A Smart Video Cropper for Social Media
+# AutoCrop-Vertical: A Smart Video Cropper for Social Media
 
-IntelliCrop is a Python script that automatically converts horizontal videos into a vertical format suitable for platforms like TikTok, Instagram Reels, and YouTube Shorts.
+![Demo of AutoCrop-Vertical](https://raw.githubusercontent.com/kamilstanuch/AutoCrop-Vertical/main/churchil_queen_vertical_short.gif)
+
+AutoCrop-Vertical is a Python script that automatically converts horizontal videos into a vertical format suitable for platforms like TikTok, Instagram Reels, and YouTube Shorts.
 
 Instead of a simple, static center crop, this script analyzes video content scene-by-scene. It uses object detection to locate people and decides whether to tightly crop the frame on the subjects or to apply letterboxing to preserve a wide shot's composition.
 
@@ -45,8 +47,8 @@ This script is built on a pipeline that uses specialized libraries for each step
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-username/IntelliCrop.git
-    cd IntelliCrop
+    git clone https://github.com/kamilstanuch/AutoCrop-Vertical.git
+    cd AutoCrop-Vertical
     ```
 
 2.  **Set up the environment:**
