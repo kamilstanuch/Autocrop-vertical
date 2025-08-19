@@ -3,3 +3,4 @@ scenedetect[opencv]
 ultralytics
 torch
 torchvision
+tqdm

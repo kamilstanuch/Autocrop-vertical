@@ -1,17 +1,18 @@
+import time
 import cv2
 import scenedetect
 import subprocess
+import argparse
 from scenedetect import VideoManager, SceneManager
 from scenedetect.detectors import ContentDetector
 from ultralytics import YOLO
 import torch
 import os
 import numpy as np
+from tqdm import tqdm
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
-OUTPUT_WIDTH = 360
-OUTPUT_HEIGHT = 640
 
 # Load the YOLO model once
 model = YOLO('yolov8n.pt')
@@ -30,7 +31,6 @@ def analyze_scene_content(video_path, scene_start_time, scene_end_time):
 
     fps = cap.get(cv2.CAP_PROP_FPS)
     
-    # Calculate the middle frame number of the scene
     start_frame = scene_start_time.get_frames()
     end_frame = scene_end_time.get_frames()
     middle_frame_number = int(start_frame + (end_frame - start_frame) / 2)
@@ -42,7 +42,6 @@ def analyze_scene_content(video_path, scene_start_time, scene_end_time):
         cap.release()
         return []
 
-    # --- Person Detection using YOLO ---
     results = model([frame], verbose=False)
     
     detected_objects = []
@@ -54,7 +53,6 @@ def analyze_scene_content(video_path, scene_start_time, scene_end_time):
                 x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                 person_box = [x1, y1, x2, y2]
                 
-                # --- Face Detection within the person box ---
                 person_roi_gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
                 faces = face_cascade.detectMultiScale(person_roi_gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
                 
@@ -132,114 +130,165 @@ def get_video_resolution(video_path):
     return width, height
 
 if __name__ == '__main__':
-    input_video = 'video_churchil.mp4'
-    temp_video_output = 'temp_video.mp4'
-    temp_audio_output = 'temp_audio.aac'
-    final_output_video = 'output.mp4'
+    parser = argparse.ArgumentParser(description="Smartly crops a horizontal video into a vertical one.")
+    parser.add_argument('-i', '--input', type=str, required=True, help="Path to the input video file.")
+    parser.add_argument('-o', '--output', type=str, required=True, help="Path to the output video file.")
+    args = parser.parse_args()
+
+    script_start_time = time.time()
+
+    input_video = args.input
+    final_output_video = args.output
+    
+    # Define temporary file paths based on the output name
+    base_name = os.path.splitext(final_output_video)[0]
+    temp_video_output = f"{base_name}_temp_video.mp4"
+    temp_audio_output = f"{base_name}_temp_audio.aac"
     
     # Clean up previous temp files if they exist
     if os.path.exists(temp_video_output): os.remove(temp_video_output)
     if os.path.exists(temp_audio_output): os.remove(temp_audio_output)
     if os.path.exists(final_output_video): os.remove(final_output_video)
 
-    print("Step 1: Detecting scenes...")
+    print("🎬 Step 1: Detecting scenes...")
+    step_start_time = time.time()
     scenes, fps = detect_scenes(input_video)
+    step_end_time = time.time()
     
     if not scenes:
-        print("No scenes were detected. Aborting.")
+        print("❌ No scenes were detected. Aborting.")
         exit()
+    
+    print(f"✅ Found {len(scenes)} scenes in {step_end_time - step_start_time:.2f}s. Here is the breakdown:")
+    for i, (start, end) in enumerate(scenes):
+        print(f"  - Scene {i+1}: {start.get_timecode()} -> {end.get_timecode()}")
 
-    print("\nStep 2: Analyzing content of each scene...")
+
+    print("\n🧠 Step 2: Analyzing scene content and determining strategy...")
+    step_start_time = time.time()
     original_width, original_height = get_video_resolution(input_video)
+    
+    OUTPUT_HEIGHT = original_height
+    OUTPUT_WIDTH = int(OUTPUT_HEIGHT * ASPECT_RATIO)
+    if OUTPUT_WIDTH % 2 != 0:
+        OUTPUT_WIDTH += 1
+
     scenes_analysis = []
-    for i, (start_time, end_time) in enumerate(scenes):
+    for i, (start_time, end_time) in enumerate(tqdm(scenes, desc="Analyzing Scenes")):
         analysis = analyze_scene_content(input_video, start_time, end_time)
+        strategy, target_box = decide_cropping_strategy(analysis, original_height)
         scenes_analysis.append({
             'start_frame': start_time.get_frames(),
             'end_frame': end_time.get_frames(),
-            'analysis': analysis
+            'analysis': analysis,
+            'strategy': strategy,
+            'target_box': target_box
         })
-        print(f"  - Scene {i+1}: Found {len(analysis)} person(s).")
+    step_end_time = time.time()
+    print(f"✅ Scene analysis complete in {step_end_time - step_start_time:.2f}s.")
 
-    print("\nStep 3: Processing video frames and piping to FFmpeg...")
+    print("\n📋 Step 3: Generated Processing Plan")
+    for i, scene_data in enumerate(scenes_analysis):
+        num_people = len(scene_data['analysis'])
+        strategy = scene_data['strategy']
+        start_time = scenes[i][0].get_timecode()
+        end_time = scenes[i][1].get_timecode()
+        print(f"  - Scene {i+1} ({start_time} -> {end_time}): Found {num_people} person(s). Strategy: {strategy}")
+
+    print("\n✂️ Step 4: Processing video frames...")
+    step_start_time = time.time()
     
-    # FFmpeg command to receive frames from stdin
     command = [
-        'ffmpeg',
-        '-y',
-        '-f', 'rawvideo',
-        '-vcodec', 'rawvideo',
-        '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}',
-        '-pix_fmt', 'bgr24',
-        '-r', str(fps),
-        '-i', '-',
-        '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-crf', '23',
-        '-an', # No audio in this temporary file
-        temp_video_output
+        'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+        '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
+        '-r', str(fps), '-i', '-', '-c:v', 'libx264',
+        '-preset', 'fast', '-crf', '23', '-an', temp_video_output
     ]
 
-    # Open FFmpeg process
-    ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE)
+    ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     cap = cv2.VideoCapture(input_video)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
     frame_number = 0
     current_scene_index = 0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    with tqdm(total=total_frames, desc="Applying Plan") as pbar:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+            if current_scene_index < len(scenes_analysis) - 1 and \
+               frame_number >= scenes_analysis[current_scene_index + 1]['start_frame']:
+                current_scene_index += 1
 
-        if frame_number % 100 == 0:
-            print(f"  - Processing frame {frame_number}/{total_frames}")
+            scene_data = scenes_analysis[current_scene_index]
+            strategy = scene_data['strategy']
+            target_box = scene_data['target_box']
 
-        # Determine which scene this frame is in
-        if current_scene_index < len(scenes_analysis) - 1 and \
-           frame_number >= scenes_analysis[current_scene_index + 1]['start_frame']:
-            current_scene_index += 1
-
-        scene_data = scenes_analysis[current_scene_index]
-        strategy, target_box = decide_cropping_strategy(scene_data['analysis'], original_height)
-
-        if strategy == 'TRACK':
-            crop_box = calculate_crop_box(target_box, original_width, original_height)
-            processed_frame = frame[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
-            output_frame = cv2.resize(processed_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
-        else: # LETTERBOX
-            scale_factor = OUTPUT_WIDTH / original_width
-            scaled_height = int(original_height * scale_factor)
-            scaled_frame = cv2.resize(frame, (OUTPUT_WIDTH, scaled_height))
+            if strategy == 'TRACK':
+                crop_box = calculate_crop_box(target_box, original_width, original_height)
+                processed_frame = frame[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
+                output_frame = cv2.resize(processed_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+            else: # LETTERBOX
+                scale_factor = OUTPUT_WIDTH / original_width
+                scaled_height = int(original_height * scale_factor)
+                scaled_frame = cv2.resize(frame, (OUTPUT_WIDTH, scaled_height))
+                
+                output_frame = np.zeros((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), dtype=np.uint8)
+                y_offset = (OUTPUT_HEIGHT - scaled_height) // 2
+                output_frame[y_offset:y_offset + scaled_height, :] = scaled_frame
             
-            output_frame = np.zeros((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), dtype=np.uint8)
-            y_offset = (OUTPUT_HEIGHT - scaled_height) // 2
-            output_frame[y_offset:y_offset + scaled_height, :] = scaled_frame
-        
-        # Write frame to FFmpeg's stdin
-        ffmpeg_process.stdin.write(output_frame.tobytes())
-        frame_number += 1
+            ffmpeg_process.stdin.write(output_frame.tobytes())
+            frame_number += 1
+            pbar.update(1)
     
     ffmpeg_process.stdin.close()
+    stderr_output = ffmpeg_process.stderr.read().decode()
     ffmpeg_process.wait()
     cap.release()
-    
-    print("\nStep 4: Extracting original audio...")
+
+    if ffmpeg_process.returncode != 0:
+        print("\n❌ FFmpeg frame processing failed.")
+        print("Stderr:", stderr_output)
+        exit()
+    step_end_time = time.time()
+    print(f"✅ Video processing complete in {step_end_time - step_start_time:.2f}s.")
+
+    print("\n🔊 Step 5: Extracting original audio...")
+    step_start_time = time.time()
     audio_extract_command = [
         'ffmpeg', '-y', '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
     ]
-    subprocess.run(audio_extract_command, check=True, capture_output=True)
+    try:
+        subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        step_end_time = time.time()
+        print(f"✅ Audio extracted in {step_end_time - step_start_time:.2f}s.")
+    except subprocess.CalledProcessError as e:
+        print("\n❌ Audio extraction failed.")
+        print("Stderr:", e.stderr.decode())
+        exit()
 
-    print("\nStep 5: Merging processed video and original audio...")
+    print("\n✨ Step 6: Merging video and audio...")
+    step_start_time = time.time()
     merge_command = [
         'ffmpeg', '-y', '-i', temp_video_output, '-i', temp_audio_output,
         '-c:v', 'copy', '-c:a', 'copy', final_output_video
     ]
-    subprocess.run(merge_command, check=True, capture_output=True)
+    try:
+        subprocess.run(merge_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        step_end_time = time.time()
+        print(f"✅ Final video merged in {step_end_time - step_start_time:.2f}s.")
+    except subprocess.CalledProcessError as e:
+        print("\n❌ Final merge failed.")
+        print("Stderr:", e.stderr.decode())
+        exit()
 
     # Clean up temp files
     os.remove(temp_video_output)
     os.remove(temp_audio_output)
 
-    print(f"\nAll done! Final video saved to {final_output_video}")
+    script_end_time = time.time()
+    print(f"\n🎉 All done! Final video saved to {final_output_video}")
+    print(f"⏱️  Total execution time: {script_end_time - script_start_time:.2f} seconds.")
