@@ -24,6 +24,8 @@ The `yolov8n.pt` model weights are downloaded automatically on first run.
 
 **Prerequisites:** Python 3.8+ and [FFmpeg](https://ffmpeg.org/) (`ffmpeg` + `ffprobe`) in your PATH.
 
+source .venv/bin/activate && yt-dlp --extractor-args "youtube:player_client=android" "https://www.youtube.com/watch?v=video-id"
+
 ---
 
 ### Usage Examples
