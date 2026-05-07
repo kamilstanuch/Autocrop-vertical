@@ -42,34 +42,79 @@ def analyze_scene_content(video_path, scene_start_time, scene_end_time):
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame_number)
 
-    ret, frame = cap.read()
-    if not ret:
-        cap.release()
+    # Run detection per sampled frame, keeping per-frame results so we can
+    # track each person across samples and measure their motion.
+    per_frame_detections = []
+    for fn in frame_numbers:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fn)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        per_frame_detections.append(_detect_people_in_frame(frame))
+    cap.release()
+
+    if not per_frame_detections:
         return []
 
-    results = get_yolo_model()([frame], verbose=False)
+    # Greedy IoU tracking: link detections across consecutive sampled frames
+    # so we can build per-person trajectories.
+    tracks = []  # each: person_box (latest), face_box, boxes[], centers[]
+    for frame_dets in per_frame_detections:
+        used = [False] * len(frame_dets)
+        # Match existing tracks to detections in this frame
+        for track in tracks:
+            best_iou, best_idx = 0.0, -1
+            for i, det in enumerate(frame_dets):
+                if used[i]:
+                    continue
+                iou = _iou(track['person_box'], det['person_box'])
+                if iou > best_iou:
+                    best_iou, best_idx = iou, i
+            if best_iou >= 0.3 and best_idx >= 0:
+                det = frame_dets[best_idx]
+                used[best_idx] = True
+                track['person_box'] = det['person_box']
+                track['boxes'].append(det['person_box'])
+                cx = (det['person_box'][0] + det['person_box'][2]) / 2
+                cy = (det['person_box'][1] + det['person_box'][3]) / 2
+                track['centers'].append((cx, cy))
+                if track['face_box'] is None and det['face_box'] is not None:
+                    track['face_box'] = det['face_box']
+        # Unmatched detections start new tracks
+        for i, det in enumerate(frame_dets):
+            if used[i]:
+                continue
+            cx = (det['person_box'][0] + det['person_box'][2]) / 2
+            cy = (det['person_box'][1] + det['person_box'][3]) / 2
+            tracks.append({
+                'person_box': list(det['person_box']),
+                'face_box': det['face_box'],
+                'boxes': [list(det['person_box'])],
+                'centers': [(cx, cy)],
+            })
 
-    detected_objects = []
+    # Compute motion score for each track. Normalized by the person's average
+    # box width so a small fidgety subject and a tall pacing subject are
+    # comparable. Score ~ "body widths travelled across the scene samples".
+    for t in tracks:
+        if len(t['centers']) < 2:
+            t['motion'] = 0.0
+        else:
+            total = 0.0
+            for i in range(1, len(t['centers'])):
+                dx = t['centers'][i][0] - t['centers'][i - 1][0]
+                dy = t['centers'][i][1] - t['centers'][i - 1][1]
+                total += (dx * dx + dy * dy) ** 0.5
+            widths = [max(1, b[2] - b[0]) for b in t['boxes']]
+            avg_w = sum(widths) / len(widths)
+            t['motion'] = total / avg_w
 
-    for result in results:
-        boxes = result.boxes
-        for box in boxes:
-            if box.cls[0] == 0:
-                x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                person_box = [x1, y1, x2, y2]
-
-                person_roi_gray = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
-                faces = get_face_cascade().detectMultiScale(person_roi_gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-
-                face_box = None
-                if len(faces) > 0:
-                    fx, fy, fw, fh = faces[0]
-                    face_box = [x1 + fx, y1 + fy, x1 + fx + fw, y1 + fy + fh]
-
-                detected_objects.append({'person_box': person_box, 'face_box': face_box})
-
-    cap.release()
-    return detected_objects
+    # Strip tracking metadata down to the public shape; keep `motion`.
+    return [{
+        'person_box': t['person_box'],
+        'face_box': t['face_box'],
+        'motion': t['motion'],
+    } for t in tracks]
 
 
 def detect_scenes(video_path, downscale=0, frame_skip=0):
@@ -108,13 +153,37 @@ def get_enclosing_box(boxes):
     max_y = max(box[3] for box in boxes)
     return [min_x, min_y, max_x, max_y]
 
-def decide_cropping_strategy(scene_analysis, frame_height):
+def decide_cropping_strategy(scene_analysis, frame_height, motion_threshold=0.5):
+    """Pick a cropping strategy for a scene.
+
+    Args:
+        scene_analysis: list of detections from analyze_scene_content. Each
+            entry may include a `motion` score (body-widths travelled across
+            sampled frames).
+        frame_height: source frame height, used to size the crop window.
+        motion_threshold: minimum motion score for a single subject to "win"
+            the scene over the group bounding box. Lower = more aggressive
+            tracking of the most active person. 0 = always track the most
+            active person; very high = legacy group-only behavior.
+    """
     num_people = len(scene_analysis)
     if num_people == 0:
         return 'LETTERBOX', None
     if num_people == 1:
         target_box = scene_analysis[0]['face_box'] or scene_analysis[0]['person_box']
         return 'TRACK', target_box
+
+    # Multiple people: if one is clearly more active than the others, focus
+    # on them rather than averaging the whole group.
+    motions = [obj.get('motion', 0.0) for obj in scene_analysis]
+    max_motion = max(motions)
+    if max_motion >= motion_threshold:
+        idx = motions.index(max_motion)
+        target = scene_analysis[idx]
+        target_box = target['face_box'] or target['person_box']
+        return 'TRACK', target_box
+
+    # Otherwise, fall back to enclosing the group (or letterboxing if too wide).
     person_boxes = [obj['person_box'] for obj in scene_analysis]
     group_box = get_enclosing_box(person_boxes)
     group_width = group_box[2] - group_box[0]
@@ -406,6 +475,30 @@ if __name__ == '__main__':
     parser.add_argument('--downscale', type=int, default=0,
                         help="Downscale factor for scene detection (default: 0 = auto). "
                              "Higher values (2-4) are faster but may miss subtle scene changes.")
+    parser.add_argument('--scene-detector', type=str, default='content',
+                        choices=['content', 'adaptive'],
+                        help="Scene-detection algorithm. 'content' (default) uses a fixed "
+                             "threshold; 'adaptive' adapts to camera motion / gradual lighting "
+                             "changes and usually catches more cuts in dynamic footage.")
+    parser.add_argument('--scene-threshold', type=float, default=None,
+                        help="Cut sensitivity. For --scene-detector content, default is 27 "
+                             "(PySceneDetect default); LOWER values (e.g. 15-20) detect more "
+                             "subtle cuts (dialogue, talk shows, similar lighting). "
+                             "For --scene-detector adaptive, default is 3.0.")
+    parser.add_argument('--min-scene-len', type=int, default=15,
+                        help="Minimum scene length in frames (default 15). Lower this to "
+                             "catch very fast cuts (montages, action edits).")
+    parser.add_argument('--analysis-samples', type=int, default=3,
+                        help="Number of frames to sample per scene for person detection "
+                             "(default 3). Higher = more reliable people detection at the "
+                             "cost of more YOLO inference. 1 = legacy middle-frame-only.")
+    parser.add_argument('--motion-threshold', type=float, default=0.5,
+                        help="In multi-person scenes, focus on the most active subject "
+                             "if their motion score (body-widths travelled across sampled "
+                             "frames) is at least this value. Default 0.5. Lower (e.g. 0.2) "
+                             "= more aggressive single-subject tracking; very high (e.g. 999) "
+                             "= legacy behavior (always group bounding box). Requires "
+                             "--analysis-samples >= 2 to have any effect.")
     parser.add_argument('--encoder', type=str, default='auto',
                         help="Video encoder: 'auto' (libx264, default), 'hw' (auto-detect hardware encoder), "
                              "or a specific encoder name like 'h264_videotoolbox' or 'h264_nvenc'.")
@@ -523,8 +616,10 @@ if __name__ == '__main__':
 
     scenes_analysis = []
     for i, (start_time, end_time) in enumerate(tqdm(scenes, desc="Analyzing Scenes")):
-        analysis = analyze_scene_content(input_video, start_time, end_time)
-        strategy, target_box = decide_cropping_strategy(analysis, original_height)
+        analysis = analyze_scene_content(input_video, start_time, end_time,
+                                         samples=args.analysis_samples)
+        strategy, target_box = decide_cropping_strategy(
+            analysis, original_height, motion_threshold=args.motion_threshold)
         scenes_analysis.append({
             'start_frame': start_time.get_frames(),
             'end_frame': end_time.get_frames(),
@@ -543,7 +638,15 @@ if __name__ == '__main__':
         strategy = scene_data['strategy']
         start_time = scenes[i][0].get_timecode()
         end_time = scenes[i][1].get_timecode()
-        print(f"  - Scene {i+1} ({start_time} -> {end_time}): Found {num_people} person(s). Strategy: {strategy}")
+        motions = [obj.get('motion', 0.0) for obj in scene_data['analysis']]
+        motion_str = ""
+        if motions:
+            top = max(motions)
+            motion_str = f", max motion: {top:.2f}"
+            if num_people > 1 and top >= args.motion_threshold:
+                motion_str += " ⚡ (focused on most active)"
+        print(f"  - Scene {i+1} ({start_time} -> {end_time}): "
+              f"Found {num_people} person(s){motion_str}. Strategy: {strategy}")
 
     if args.plan_only:
         track_count = sum(1 for s in scenes_analysis if s['strategy'] == 'TRACK')
