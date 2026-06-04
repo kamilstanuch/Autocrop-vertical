@@ -37,13 +37,7 @@ Long Video Input
     |
     v
 +-------------------------------+
-| 5. Hook Overlays              | PENDING
-|    (PIL + FFmpeg)             | viral text overlays
-+-------------------------------+
-    |
-    v
-+-------------------------------+
-| 6. AI Effects                 | PENDING
+| 5. AI Effects                 | COMPLETE
 |    (Gemini + FFmpeg filters)  | dynamic zooms, enhancements
 +-------------------------------+
     |
@@ -113,6 +107,24 @@ python3 subtitle_generator.py clip.mp4 transcript.json --max-chars 25 --max-dura
 ```
 
 Note: Requires FFmpeg with libass support. Install with: `brew install ffmpeg-full`
+
+### AI Effects
+
+```bash
+# Add AI-generated effects to a single clip
+python3 ai_effects.py clip.mp4 transcript.json -o enhanced.mp4
+
+# Batch process from viral detection JSON
+python3 ai_effects.py --batch viral_clips.json --transcript transcript.json -o effects/
+
+# Dry run (validate filters without applying)
+python3 ai_effects.py clip.mp4 transcript.json --dry-run
+
+# Specify time range for context
+python3 ai_effects.py clip.mp4 transcript.json -s 10.5 -e 68.7 -o enhanced.mp4
+```
+
+Note: AI Effects requires active Gemini API key. Effects include contextual zooms and color grading based on video content.
 
 ### Transcription
 
