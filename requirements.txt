@@ -7,3 +7,4 @@ tqdm>=4.60
 faster-whisper>=1.0.0
 google-genai>=1.0.0
 python-dotenv>=1.0.0
+gradio>=4.0.0

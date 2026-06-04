@@ -63,6 +63,33 @@ Get a free API key at: https://aistudio.google.com/app/apikey
 
 Prerequisites: Python 3.8+, FFmpeg in PATH
 
+## Quick Start (Web UI)
+
+**Easiest way to use:** Run the web interface for a simple drag-and-drop experience.
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Launch web interface
+python3 app.py
+```
+
+Then open your browser to `http://localhost:7860`
+
+1. Upload your video
+2. Enter your Gemini API key
+3. Click "Generate Viral Clips"
+4. Download your clips!
+
+**Note:** Processing takes 5-15 minutes depending on video length.
+
+---
+
+## Advanced Usage (Command Line)
+
+For more control, use the command-line tools below:
+
 ## Commands
 
 ### Viral Moment Detection
