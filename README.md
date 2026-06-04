@@ -1,228 +1,166 @@
-# AutoCrop-Vertical: Smart Video Cropper for Social Media
+# AI Video Clipping Bot
 
-![Demo of AutoCrop-Vertical](https://github.com/kamilstanuch/Autocrop-vertical/blob/main/churchil_queen_vertical_short.gif?raw=true)
+An AI-powered tool that transforms long horizontal videos into viral-ready vertical shorts for TikTok, Instagram Reels, and YouTube Shorts.
 
-Automatically converts horizontal videos into vertical format for TikTok, Instagram Reels, and YouTube Shorts.
+The system uses Google Gemini API to analyze video transcripts and identify the most engaging moments, then generates platform-optimized metadata for each clip.
 
-Instead of a static center crop, the script analyzes each scene using AI (YOLOv8), detects people, and decides whether to crop tightly on the subjects or letterbox to preserve the full shot.
+## Architecture
 
----
+```
+Long Video Input
+    |
+    v
++-------------------------------+
+| 1. Transcription              | COMPLETE
+|    (faster-whisper)           | word-level timestamps
++-------------------------------+
+    |
+    v
++-------------------------------+
+| 2. AI Viral Detection         | COMPLETE
+|    (Google Gemini API)        | identifies 3-15 clips (15-60s)
+|                               | generates hooks & metadata
++-------------------------------+
+    |
+    v
++-------------------------------+
+| 3. Clip Extraction            | COMPLETE
+|    (FFmpeg)                   | precise timestamp cutting
+|                               | + vertical conversion (optional)
++-------------------------------+
+    |
+    v
++-------------------------------+
+| 4. Subtitle Generation        | COMPLETE
+|    (SRT/ASS from timestamps)  | TikTok-style captions
++-------------------------------+
+    |
+    v
++-------------------------------+
+| 5. Hook Overlays              | PENDING
+|    (PIL + FFmpeg)             | viral text overlays
++-------------------------------+
+    |
+    v
++-------------------------------+
+| 6. AI Effects                 | PENDING
+|    (Gemini + FFmpeg filters)  | dynamic zooms, enhancements
++-------------------------------+
+    |
+    v
+Multiple Viral Clips Ready to Post
+```
 
-### Quick Start
+## Setup
 
 ```bash
-git clone https://github.com/kamilstanuch/AutoCrop-Vertical.git
-cd AutoCrop-Vertical
+# Clone and install dependencies
+git clone <repository-url>
+cd "AI Video Clipping Bot"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python3 main.py -i video.mp4 -o vertical.mp4
+# Configure Google Gemini API key (free tier available)
+echo "GEMINI_API_KEY=your_key_here" > .env
 ```
 
-The `yolov8n.pt` model weights are downloaded automatically on first run.
+Get a free API key at: https://aistudio.google.com/app/apikey
 
-**Prerequisites:** Python 3.8+ and [FFmpeg](https://ffmpeg.org/) (`ffmpeg` + `ffprobe`) in your PATH.
+Prerequisites: Python 3.8+, FFmpeg in PATH
 
----
+## Commands
 
-### Usage Examples
+### Viral Moment Detection
 
 ```bash
-# Basic — 9:16 vertical, balanced quality
+# Detect viral moments from a video
+python3 viral_detector.py video.mp4
+
+# Output: video_viral_clips.json with timestamps and metadata
+```
+
+### Clip Extraction
+
+```bash
+# Extract all viral clips from JSON (horizontal format)
+python3 clip_extractor.py video.mp4 video_viral_clips.json
+
+# Extract and convert to vertical format (9:16) - RECOMMENDED
+python3 clip_extractor.py video.mp4 video_viral_clips.json --vertical
+
+# Custom output directory and quality
+python3 clip_extractor.py video.mp4 clips.json -o output_clips -q high --vertical
+
+# Extract single clip manually
+python3 clip_extractor.py video.mp4 -s 10.5 -e 35.2 -o clip.mp4
+```
+
+### Subtitle Generation
+
+```bash
+# Add TikTok-style subtitles to a clip
+python3 subtitle_generator.py clip.mp4 transcript.json
+
+# Specify time range
+python3 subtitle_generator.py clip.mp4 transcript.json -s 10.5 -e 68.7
+
+# Custom output and styling
+python3 subtitle_generator.py clip.mp4 transcript.json -o subtitled.mp4 --style tiktok --position bottom
+
+# Advanced options
+python3 subtitle_generator.py clip.mp4 transcript.json --max-chars 25 --max-duration 2.5
+```
+
+Note: Requires FFmpeg with libass support. Install with: `brew install ffmpeg-full`
+
+### Transcription
+
+```bash
+# Generate transcript with word-level timestamps
+python3 transcribe.py video.mp4 output.json
+
+# Choose model size (tiny, base, small, medium, large)
+python3 transcribe.py video.mp4 output.json --model base
+```
+
+### Vertical Video Conversion (Legacy Feature)
+
+```bash
+# Convert horizontal to vertical (9:16)
 python3 main.py -i video.mp4 -o vertical.mp4
 
-# Instagram feed (4:5) with high quality
-python3 main.py -i video.mp4 -o vertical.mp4 --ratio 4:5 --quality high
+# Custom aspect ratio
+python3 main.py -i video.mp4 -o vertical.mp4 --ratio 4:5
 
-# Fast encode, square format
-python3 main.py -i video.mp4 -o vertical.mp4 --ratio 1:1 --quality fast
+# Quality presets: fast, balanced, high
+python3 main.py -i video.mp4 -o vertical.mp4 --quality high
 
-# Preview the processing plan without encoding
-python3 main.py -i video.mp4 -o vertical.mp4 --plan-only
-
-# Full control over encoding parameters
-python3 main.py -i video.mp4 -o vertical.mp4 --crf 20 --preset medium
-
-# Use hardware encoder (macOS VideoToolbox / NVIDIA NVENC)
+# Hardware encoding
 python3 main.py -i video.mp4 -o vertical.mp4 --encoder hw
-
-# Maximum accuracy scene detection (slower)
-python3 main.py -i video.mp4 -o vertical.mp4 --frame-skip 0
 ```
 
----
+## Output Format
 
-### All Flags
+Each detected viral clip includes:
+- Precise start/end timestamps
+- Viral hook text (max 10 words for overlay)
+- YouTube Shorts optimized title
+- TikTok description with hashtags
+- Instagram Reels description with hashtags
 
-**Output:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-i`, `--input` | *(required)* | Path to input video |
-| `-o`, `--output` | *(required)* | Path to output video (`.mp4` appended if no extension) |
-| `--ratio` | `9:16` | Output aspect ratio. Examples: `9:16`, `4:5`, `1:1` |
-
-**Encoding quality:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--quality` | `balanced` | Preset: `fast`, `balanced`, or `high` (see table below) |
-| `--encoder` | `auto` | `auto` = libx264 (software), `hw` = hardware if available, or explicit name like `h264_videotoolbox` |
-| `--crf` | *(from quality)* | Override CRF directly, 0-51 lower = better (libx264 only) |
-| `--preset` | *(from quality)* | Override x264 preset directly: `ultrafast`..`veryslow` (libx264 only) |
-
-**Quality presets (libx264):**
-
-| `--quality` | CRF | Preset | Typical use |
-|-------------|-----|--------|-------------|
-| `fast` | 28 | veryfast | Quick previews, drafts |
-| `balanced` | 23 | fast | Good quality, reasonable speed |
-| `high` | 18 | slow | Best quality, largest file, slowest |
-
-**Scene detection tuning:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--frame-skip` | `0` | Frames to skip during scene detection. `0` = every frame (most accurate). `1` = every other frame (~2x faster). Higher = faster but may miss cuts |
-| `--downscale` | `0` (auto) | Downscale factor for scene detection. `0` = auto. `2`-`4` = faster but may miss subtle cuts |
-
-**Other:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--plan-only` | off | Run scene detection + analysis only, print the plan, exit without encoding |
-
----
-
-### Key Features
-
-*   **Content-Aware Cropping:** YOLOv8 detects people and centers the vertical frame on them.
-*   **Automatic Letterboxing:** When people are too spread out for a vertical crop, black bars are added to preserve the full shot.
-*   **Scene-by-Scene Processing:** Decisions are made per scene for consistent, logical edits.
-*   **Native Resolution:** Output height matches the source to prevent quality loss from upscaling.
-*   **Frame-Accurate Processing:** Every frame is processed individually with the correct per-scene strategy — no timestamp rounding or scene boundary drift.
-*   **Hardware Encoder Support:** Optional `--encoder hw` auto-detects VideoToolbox (macOS) or NVENC (NVIDIA) with automatic fallback to libx264.
-*   **VFR Handling:** Variable frame rate sources are automatically normalized before processing.
-*   **Audio Sync:** Non-zero stream start times are detected and compensated to keep audio/video aligned.
-
----
-
-### How It Works
-
+Example JSON output:
+```json
+{
+  "clips": [
+    {
+      "start": 106.02,
+      "end": 138.74,
+      "viral_hook_text": "Keto beats Ozempic for hunger?",
+      "video_title_for_youtube_short": "Keto vs Ozempic: The ULTIMATE Hunger Hormone Showdown!",
+      "video_description_for_tiktok": "Keto naturally boosts GLP1 and silences hunger...",
+      "video_description_for_instagram": "Learn how keto naturally fixes your hunger..."
+    }
+  ]
+}
 ```
-Input Video
-    |
-    v
-+-------------------------------+
-| 1. Scene Detection            |  PySceneDetect splits the video into scenes
-|    (--frame-skip, --downscale)|
-+---------------+---------------+
-                |
-                v
-+-------------------------------+
-| 2. Content Analysis           |  YOLOv8 detects people in each scene's
-|    (middle frame per scene)   |  middle frame; Haar cascade finds faces
-+---------------+---------------+
-                |
-                v
-+-------------------------------+
-| 3. Strategy Decision          |  Per scene: TRACK (crop on subject)
-|                               |  or LETTERBOX (scale + black bars)
-+---------------+---------------+
-                |
-                v
-+-------------------------------+
-| 4. Frame Processing           |  Per-frame crop/scale/pad via OpenCV
-|    (--quality, --encoder)     |  piped to FFmpeg for encoding
-+---------------+---------------+
-                |
-                v
-+-------------------------------+
-| 5-6. Audio extract + merge    |  Audio synced with start-time offset
-+---------------+---------------+
-                |
-                v
-          Output Video
-```
-
-Steps 1-3 are the "planning" phase (Python + AI). Step 4 applies the plan frame-by-frame and encodes via FFmpeg.
-
----
-
-### Performance
-
-Benchmarks on Apple M1 MacBook Pro (AC power):
-
-| Resolution | Duration | Total time | Speed |
-|-----------|----------|-----------|-------|
-| 1280x720 | 49s | ~6s | 8.3x real-time |
-| 1920x1080 | 12 min | ~51s | 13.7x real-time |
-
-Scene detection is the dominant bottleneck (~50% of total time).
-
----
-
-### Technical Details
-
-This script is built on a pipeline that uses specialized libraries for each step:
-
-*   **Core Libraries:**
-    *   `PySceneDetect`: For accurate, content-aware scene cut detection.
-    *   `Ultralytics (YOLOv8)`: For fast and reliable person detection.
-    *   `OpenCV`: Used for frame manipulation, face detection (as a fallback), and reading video properties.
-    *   `FFmpeg` / `ffprobe`: The backbone of video encoding, audio extraction, and media stream analysis.
-    *   `tqdm`: For clean and informative progress bars in the console.
-
-*   **Processing Pipeline:**
-    1.  **(Pre-processing)** If the source is VFR, it is normalized to constant frame rate.
-    2.  `PySceneDetect` scans the video and returns a list of scene timestamps.
-    3.  For each scene, `OpenCV` extracts a sample frame and `YOLOv8` detects people in it.
-    4.  A set of rules determines the strategy (`TRACK` or `LETTERBOX`) for each scene based on the number and position of detected people.
-    5.  OpenCV reads every frame sequentially. Each frame is cropped/resized (TRACK) or scaled/padded (LETTERBOX) according to its scene's strategy, then piped as raw pixels to FFmpeg for encoding. This frame-by-frame approach guarantees frame-accurate scene boundaries with no timestamp rounding errors.
-    6.  Audio is extracted separately (with start-time offset correction), then merged with the processed video.
-
----
-
-### Changelog
-
-#### v1.4.1 (2026-02-15) — Cropping Accuracy Fix
-
-*   **Fixed incorrect crop/letterbox decisions near scene boundaries.** The v1.3 `filter_complex` pipeline used seconds-based `trim` filters, which caused floating-point misalignment with the frame-based scene boundaries from PySceneDetect. This led to frames at scene transitions receiving the wrong strategy (e.g., a properly tracked person switching to letterbox mid-scene, or a group shot being cropped instead of letterboxed). Restored the original frame-by-frame processing pipeline which uses exact frame numbers for scene boundary matching, guaranteeing frame-accurate results.
-
-#### v1.4.0 (2026-02-15) — Hardware Encoding & Scene Detection Tuning
-
-**New Features:**
-
-*   **Hardware encoder support (`--encoder`).** New flag with three modes: `auto` (libx264, default for best quality/compatibility), `hw` (auto-detect VideoToolbox on macOS or NVENC on NVIDIA), or an explicit encoder name. Quality presets (`--quality`) map automatically per encoder type.
-*   **Configurable scene detection (`--frame-skip`, `--downscale`).** Power users can tune the speed/accuracy trade-off. Default `--frame-skip 0` processes every frame for maximum accuracy; increase for faster detection on longer videos.
-
-#### v1.3.0 (2026-02-15) — Configurable Output & Quality Presets
-
-**New Features:**
-
-*   **Configurable aspect ratio (`--ratio`).** Output is no longer locked to 9:16. Use `--ratio 4:5` for Instagram feed, `--ratio 1:1` for square, or any custom W:H ratio.
-*   **Quality presets (`--quality`).** Choose between `fast` (CRF 28, veryfast), `balanced` (CRF 23, fast — default), or `high` (CRF 18, slow). Power users can override directly with `--crf` and `--preset`.
-*   **Dry-run mode (`--plan-only`).** Runs scene detection and analysis only, prints the processing plan, and exits without encoding. Useful for previewing decisions before committing to a long encode.
-*   **Fixed output pixel format.** Encoder now outputs `yuv420p` instead of `yuv444p`, which is compatible with all players and platforms and produces smaller files.
-*   **Improved logging and progress reporting.** Input file summary upfront (resolution, duration, fps, codec, file size, frame count), progress bars on all slow operations, and a final summary with output size, compression ratio, and processing speed.
-
-#### v1.1.0 (2026-02-14)
-
-**Bug Fixes:**
-
-*   **Fixed audio/video desynchronization.** This was caused by two separate issues:
-    *   The frame rate was being read from PySceneDetect while frames were read by OpenCV. A mismatch between the two (e.g. 29.97 vs 30.0) caused the encoded video duration to drift from the audio. FPS is now read from OpenCV (the same backend that reads the frames) with explicit `-vsync cfr` enforcement.
-    *   Many source files (especially YouTube downloads) have a non-zero `start_time` on the video stream (e.g. audio at 0.0s, video at 1.8s). The script now detects this offset via `ffprobe` and trims the extracted audio to match, so the two streams stay aligned.
-*   **Fixed crash on videos without an audio stream.** The script now detects whether audio exists using `ffprobe` and skips the audio extraction/merge steps gracefully.
-*   **Fixed hardcoded `.aac` temp audio file.** The temp audio container is now `.mkv`, which accepts any audio codec. Previously, source files with non-AAC audio (MP3, Opus, AC3, etc.) could fail or produce corrupt output.
-*   **Fixed crash when output path has no file extension.** The script now auto-appends `.mp4` if no extension is provided.
-*   **Fixed orphaned temp files on failure.** Temporary files are now cleaned up on all exit paths, not just on success.
-
-**Improvements:**
-
-*   **Variable frame rate (VFR) handling.** Phone-recorded videos often use VFR, which caused frame timing drift. The script now detects VFR sources via `ffprobe` and normalizes them to constant frame rate before processing.
-*   **Corrupt frame resilience.** If a frame fails to process (bad crop, corrupt data), it is duplicated from the previous good frame instead of being dropped. This preserves the total frame count and prevents audio drift.
-*   **Lazy model loading.** YOLO and Haar cascade models are now loaded on first use instead of at import time. Heavy library imports (`torch`, `ultralytics`, `cv2`, etc.) are deferred until after argument parsing, so `--help` is instant.
-*   **Pinned dependency versions.** `requirements.txt` now specifies compatible version ranges to prevent breakage from upstream changes.
-*   **Replaced `exit()` with `sys.exit(1)`.** Ensures proper exit codes and reliable behavior in all environments.
