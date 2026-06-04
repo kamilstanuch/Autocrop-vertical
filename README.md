@@ -31,8 +31,8 @@ Long Video Input
     |
     v
 +-------------------------------+
-| 4. Subtitle Generation        | PENDING
-|    (SRT from timestamps)      | TikTok-style captions
+| 4. Subtitle Generation        | COMPLETE
+|    (SRT/ASS from timestamps)  | TikTok-style captions
 +-------------------------------+
     |
     v
@@ -95,6 +95,24 @@ python3 clip_extractor.py video.mp4 clips.json -o output_clips -q high --vertica
 # Extract single clip manually
 python3 clip_extractor.py video.mp4 -s 10.5 -e 35.2 -o clip.mp4
 ```
+
+### Subtitle Generation
+
+```bash
+# Add TikTok-style subtitles to a clip
+python3 subtitle_generator.py clip.mp4 transcript.json
+
+# Specify time range
+python3 subtitle_generator.py clip.mp4 transcript.json -s 10.5 -e 68.7
+
+# Custom output and styling
+python3 subtitle_generator.py clip.mp4 transcript.json -o subtitled.mp4 --style tiktok --position bottom
+
+# Advanced options
+python3 subtitle_generator.py clip.mp4 transcript.json --max-chars 25 --max-duration 2.5
+```
+
+Note: Requires FFmpeg with libass support. Install with: `brew install ffmpeg-full`
 
 ### Transcription
 
