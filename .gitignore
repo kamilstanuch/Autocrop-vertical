@@ -9,5 +9,8 @@
 __pycache__/
 *.pyc
 
+# Environment variables
+.env
+
 # Temporary files
 temp_*.mp4

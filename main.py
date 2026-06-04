@@ -12,6 +12,7 @@ ASPECT_RATIO = 9 / 16
 _model = None
 _face_cascade = None
 
+# if people found, identify faces -> use face box if available, otherwise person box
 def get_yolo_model():
     global _model
     if _model is None:
@@ -19,6 +20,7 @@ def get_yolo_model():
         _model = YOLO('yolov8n.pt')
     return _model
 
+# identify faces within the person box
 def get_face_cascade():
     global _face_cascade
     if _face_cascade is None:
