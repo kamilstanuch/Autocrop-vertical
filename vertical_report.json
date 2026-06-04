@@ -1,0 +1,102 @@
+{
+  "total_clips": 5,
+  "successful": 5,
+  "failed": 0,
+  "clips": [
+    {
+      "clip_number": 1,
+      "start": 0.0,
+      "end": 58.1,
+      "duration": 58.1,
+      "output_path": "vertical_clips/viral_001.mp4",
+      "success": true,
+      "error": null,
+      "metadata": {
+        "start": 0.0,
+        "end": 58.1,
+        "viral_hook_text": "The TRUTH about Ozempic side effects",
+        "video_title_for_youtube_short": "The SHOCKING Truth About Ozempic's Side Effects! \ud83d\udc8a",
+        "video_description_for_tiktok": "You won't believe how Ozempic REALLY works in your body... \ud83e\udd2f #Ozempic #WeightLoss #HealthFacts #BigPharma #Controversy",
+        "video_description_for_instagram": "Thinking about Ozempic? You NEED to hear this first! \ud83d\udea8 The hidden truth about how it affects your gut. #OzempicSideEffects #GutHealth #HealthAwareness #Reels"
+      },
+      "file_size": 2138285,
+      "vertical": true
+    },
+    {
+      "clip_number": 2,
+      "start": 65.54,
+      "end": 105.52,
+      "duration": 39.97999999999999,
+      "output_path": "vertical_clips/viral_002.mp4",
+      "success": true,
+      "error": null,
+      "metadata": {
+        "start": 65.54,
+        "end": 105.52,
+        "viral_hook_text": "Your gut barrier has FAILED you!",
+        "video_title_for_youtube_short": "Is Your Gut Barrier Causing Constant Hunger? \ud83d\ude31",
+        "video_description_for_tiktok": "The real reason you're always hungry is NOT what you think! Your gut shield is failing... \ud83d\udc94 #GutHealth #ChronicHunger #Digestion #HealthTips #Inflammation",
+        "video_description_for_instagram": "Mind-blowing truth about why you're always hungry! It all starts with your gut barrier. \ud83e\udd2f #GutBarrier #HungerHormones #HealthFacts #Reels"
+      },
+      "file_size": 1308989,
+      "vertical": true
+    },
+    {
+      "clip_number": 3,
+      "start": 106.02,
+      "end": 138.74,
+      "duration": 32.72000000000001,
+      "output_path": "vertical_clips/viral_003.mp4",
+      "success": true,
+      "error": null,
+      "metadata": {
+        "start": 106.02,
+        "end": 138.74,
+        "viral_hook_text": "Keto beats Ozempic for hunger?",
+        "video_title_for_youtube_short": "Keto vs Ozempic: The ULTIMATE Hunger Hormone Showdown! \ud83d\udd25",
+        "video_description_for_tiktok": "Keto isn't just about fat! It naturally boosts GLP1 and silences your hunger goblin. Is it better than Ozempic? \ud83e\udd14 #Keto #Ozempic #HungerHormones #GLP1 #WeightLoss",
+        "video_description_for_instagram": "Forget Ozempic! Learn how keto naturally fixes your hunger by stimulating GLP1 and suppressing ghrelin. #KetoDiet #OzempicAlternative #NaturalWeightLoss #Reels"
+      },
+      "file_size": 1196881,
+      "vertical": true
+    },
+    {
+      "clip_number": 4,
+      "start": 139.04,
+      "end": 160.0,
+      "duration": 20.960000000000008,
+      "output_path": "vertical_clips/viral_004.mp4",
+      "success": true,
+      "error": null,
+      "metadata": {
+        "start": 139.04,
+        "end": 160.0,
+        "viral_hook_text": "They CURED IBD with THIS diet!",
+        "video_title_for_youtube_short": "Unbelievable! IBD Patients Cured with This Diet! \ud83e\udd2f",
+        "video_description_for_tiktok": "IBD patients failed all therapies, then tried THIS diet and achieved clinical remission! The power of healing your gut... \ud83d\ude4f #IBD #GutHealing #CarnivoreDiet #KetoDiet #HealthSuccess",
+        "video_description_for_instagram": "Real people, real healing! Watch how inflammatory bowel disease patients found remission with a carnivore ketogenic diet. #GutHealthJourney #ClinicalRemission #DietSuccess #Reels"
+      },
+      "file_size": 659548,
+      "vertical": true
+    },
+    {
+      "clip_number": 5,
+      "start": 160.0,
+      "end": 189.7,
+      "duration": 29.69999999999999,
+      "output_path": "vertical_clips/viral_005.mp4",
+      "success": true,
+      "error": null,
+      "metadata": {
+        "start": 160.0,
+        "end": 189.7,
+        "viral_hook_text": "Sardine Challenge: Fix your gut in 72 hours!",
+        "video_title_for_youtube_short": "The 72-Hour Sardine Challenge: Heal Your Gut Fast! \ud83d\udc1f",
+        "video_description_for_tiktok": "Want to fix your gut barrier and vanish appetite naturally? Try the 72-hour Sardine Challenge! Good, better, best healing continuum... #SardineChallenge #GutRepair #Omega3 #AppetiteSuppression #HealthHack",
+        "video_description_for_instagram": "Unlock rapid gut healing with the Sardine Challenge! Omega-3s and protein for natural appetite suppression. Are you up for it? \ud83d\udcaa #Sardines #GutHealthTips #HealthyFats #Reels"
+      },
+      "file_size": 1010671,
+      "vertical": true
+    }
+  ]
+}
