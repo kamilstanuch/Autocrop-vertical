@@ -302,13 +302,20 @@ def smoothstep(progress):
     return progress * progress * (3.0 - 2.0 * progress)
 
 
-def interpolate_pan_x(start_x, end_x, frame_offset, duration_frames):
+def interpolate_pan_x(start_x, end_x, frame_offset, duration_frames,
+                      min_x=None, max_x=None):
     """Interpolate a crop's left edge over a fixed number of frames."""
     if duration_frames <= 1:
-        return int(round(end_x))
-    progress = frame_offset / (duration_frames - 1)
-    eased = smoothstep(progress)
-    return int(round(start_x + (end_x - start_x) * eased))
+        x = int(round(end_x))
+    else:
+        progress = frame_offset / (duration_frames - 1)
+        eased = smoothstep(progress)
+        x = int(round(start_x + (end_x - start_x) * eased))
+    if min_x is not None:
+        x = max(min_x, x)
+    if max_x is not None:
+        x = min(max_x, x)
+    return x
 
 
 def frame_difference_score(frame_before, frame_after):
@@ -329,67 +336,63 @@ def frame_difference_score(frame_before, frame_after):
     return float(cv2.absdiff(before, after).mean() / 255.0)
 
 
-def read_boundary_score(cap, boundary_frame):
-    """Measure visual discontinuity immediately across one scene boundary."""
-    import cv2
-    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, boundary_frame - 1))
-    before_ok, before = cap.read()
-    cap.set(cv2.CAP_PROP_POS_FRAMES, boundary_frame)
-    after_ok, after = cap.read()
-    if not before_ok or not after_ok:
-        return 1.0
-    return frame_difference_score(before, after)
-
-
 def plan_pan_transitions(video_path, scenes_analysis, frame_width, frame_height,
                          fps, pan_duration=0.4, hard_cut_threshold=0.18,
                          jitter_ratio=0.08):
-    """Annotate scenes with hard/soft boundary and eased pan metadata.
+    """Annotate scenes with eased pan metadata.
 
-    Only visually continuous TRACK-to-TRACK boundaries are eligible. Actual
-    source cuts and TRACK/LETTERBOX layout changes intentionally stay instant.
+    TRACK-to-TRACK crop jumps larger than jitter_ratio are eased over
+    pan_duration seconds. That includes speaker switches and over-segmented
+    shots — the cases that look choppy if the crop snaps in one frame.
+    LETTERBOX layout switches stay instant.
+
+    video_path and hard_cut_threshold are accepted for call-site
+    compatibility but no longer gate pans. v1.5.0 compared decoded pixels
+    across each boundary via OpenCV random-access seeks; on production
+    H.264 those seeks are unreliable and nearly every boundary scored as a
+    hard cut, so no pan was ever applied.
     """
-    import cv2
     crop_width = min(frame_width, int(frame_height * ASPECT_RATIO))
-    pan_frames = max(1, int(round(max(0.0, pan_duration) * fps)))
+    if pan_duration <= 0 or fps <= 0:
+        pan_frames = 0
+    else:
+        pan_frames = max(2, int(round(pan_duration * fps)))
     min_pan_distance = crop_width * jitter_ratio
-    cap = cv2.VideoCapture(video_path)
+    max_x = max(0, frame_width - crop_width)
 
-    try:
-        for i, scene in enumerate(scenes_analysis):
-            scene['boundary_kind'] = 'start' if i == 0 else 'hard-cut'
-            scene['boundary_score'] = None
-            scene['pan'] = None
-            if i == 0:
-                continue
+    for i, scene in enumerate(scenes_analysis):
+        scene['boundary_kind'] = 'start' if i == 0 else 'cut'
+        scene['boundary_score'] = None
+        scene['pan'] = None
+        if i == 0:
+            continue
 
-            score = read_boundary_score(cap, scene['start_frame'])
-            scene['boundary_score'] = score
-            if score >= hard_cut_threshold:
-                continue
+        previous = scenes_analysis[i - 1]
+        if pan_frames <= 0 or previous.get('strategy') != 'TRACK' or \
+           scene.get('strategy') != 'TRACK':
+            if previous.get('strategy') != scene.get('strategy'):
+                scene['boundary_kind'] = 'layout-switch'
+            continue
+        if previous.get('target_box') is None or scene.get('target_box') is None:
+            continue
 
-            scene['boundary_kind'] = 'soft'
-            previous = scenes_analysis[i - 1]
-            if pan_duration <= 0 or previous['strategy'] != 'TRACK' or \
-               scene['strategy'] != 'TRACK':
-                continue
+        previous_x = calculate_crop_box(
+            previous['target_box'], frame_width, frame_height)[0]
+        target_x = calculate_crop_box(
+            scene['target_box'], frame_width, frame_height)[0]
+        previous_x = min(max(0, previous_x), max_x)
+        target_x = min(max(0, target_x), max_x)
+        if abs(target_x - previous_x) < min_pan_distance:
+            scene['boundary_kind'] = 'hold'
+            continue
 
-            previous_x = calculate_crop_box(
-                previous['target_box'], frame_width, frame_height)[0]
-            target_x = calculate_crop_box(
-                scene['target_box'], frame_width, frame_height)[0]
-            if abs(target_x - previous_x) < min_pan_distance:
-                continue
-
-            available_frames = max(
-                1, scene['end_frame'] - scene['start_frame'])
-            scene['pan'] = {
-                'from_x': previous_x,
-                'to_x': target_x,
-                'duration_frames': min(pan_frames, available_frames),
-            }
-    finally:
-        cap.release()
+        available_frames = max(1, scene['end_frame'] - scene['start_frame'])
+        scene['boundary_kind'] = 'pan'
+        scene['pan'] = {
+            'from_x': previous_x,
+            'to_x': target_x,
+            'duration_frames': min(pan_frames, available_frames),
+        }
 
     return scenes_analysis
 
@@ -689,9 +692,10 @@ def cli():
                              "= legacy behavior (always group bounding box). Requires "
                              "--analysis-samples >= 2 to have any effect.")
     parser.add_argument('--pan-duration', type=float, default=0.4,
-                        help="Seconds used to smoothly pan between tracked subjects "
-                             "across visually continuous boundaries (default 0.4). "
-                             "Hard source cuts and TRACK/LETTERBOX switches remain instant. "
+                        help="Seconds used to smoothly pan the crop between tracked "
+                             "subjects when the crop center jumps (default 0.4). "
+                             "Applies to TRACK-to-TRACK reframes, including speaker "
+                             "switches. TRACK/LETTERBOX layout switches stay instant. "
                              "Set to 0 to disable.")
     parser.add_argument('--encoder', type=str, default='auto',
                         help="Video encoder: 'auto' (libx264, default), 'hw' (auto-detect hardware encoder), "
@@ -871,11 +875,13 @@ def cli():
                 motion_str += " ⚡ (focused on most active)"
         transition_str = ""
         if i > 0:
-            boundary = scene_data['boundary_kind']
-            score = scene_data['boundary_score']
-            transition_str = f", boundary: {boundary} ({score:.3f})"
-            if scene_data['pan']:
-                transition_str += f", pan: {args.pan_duration:.2f}s"
+            boundary = scene_data.get('boundary_kind', 'cut')
+            transition_str = f", boundary: {boundary}"
+            if scene_data.get('pan'):
+                transition_str += (
+                    f", pan: {args.pan_duration:.2f}s "
+                    f"({scene_data['pan']['duration_frames']}f)"
+                )
         print(f"  - Scene {i+1} ({start_time} -> {end_time}): "
               f"Found {num_people} person(s){motion_str}. Strategy: {strategy}"
               f"{transition_str}")
@@ -935,17 +941,20 @@ def cli():
                     pan = scene_data.get('pan')
                     if pan:
                         scene_frame = frame_number - scene_data['start_frame']
-                        if scene_frame < pan['duration_frames']:
+                        if 0 <= scene_frame < pan['duration_frames']:
+                            crop_width = crop_box[2] - crop_box[0]
                             x1 = interpolate_pan_x(
                                 pan['from_x'],
                                 pan['to_x'],
                                 scene_frame,
                                 pan['duration_frames'],
+                                min_x=0,
+                                max_x=max(0, original_width - crop_width),
                             )
                             crop_box = (
                                 x1,
                                 0,
-                                x1 + (crop_box[2] - crop_box[0]),
+                                x1 + crop_width,
                                 original_height,
                             )
                     processed_frame = frame[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
