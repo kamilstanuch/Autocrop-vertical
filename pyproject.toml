@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autocrop-vertical"
-version = "1.5.0"
+version = "1.5.1"
 description = "Smart video converter using YOLOv8 + PySceneDetect to convert horizontal video to vertical 9:16 for social media."
 readme = "README.md"
 requires-python = ">=3.8"
