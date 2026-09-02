@@ -86,6 +86,7 @@ python3 main.py -i video.mp4 -o vertical.mp4 --frame-skip 0
 |------|---------|-------------|
 | `--frame-skip` | `0` | Frames to skip during scene detection. `0` = every frame (most accurate). `1` = every other frame (~2x faster). Higher = faster but may miss cuts |
 | `--downscale` | `0` (auto) | Downscale factor for scene detection. `0` = auto. `2`-`4` = faster but may miss subtle cuts |
+| `--pan-duration` | `0.4` | Seconds used for an eased pan between tracked subjects at visually continuous boundaries. `0` disables panning |
 
 **Other:**
 
@@ -100,6 +101,7 @@ python3 main.py -i video.mp4 -o vertical.mp4 --frame-skip 0
 *   **Content-Aware Cropping:** YOLOv8 detects people and centers the vertical frame on them.
 *   **Automatic Letterboxing:** When people are too spread out for a vertical crop, black bars are added to preserve the full shot.
 *   **Scene-by-Scene Processing:** Decisions are made per scene for consistent, logical edits.
+*   **Smooth Subject Pans:** Crop-center changes at visually continuous boundaries use a short eased pan, while real camera cuts and layout switches remain immediate.
 *   **Native Resolution:** Output height matches the source to prevent quality loss from upscaling.
 *   **Frame-Accurate Processing:** Every frame is processed individually with the correct per-scene strategy — no timestamp rounding or scene boundary drift.
 *   **Hardware Encoder Support:** Optional `--encoder hw` auto-detects VideoToolbox (macOS) or NVENC (NVIDIA) with automatic fallback to libx264.
@@ -185,6 +187,12 @@ This script is built on a pipeline that uses specialized libraries for each step
 ---
 
 ### Changelog
+
+#### v1.5.0 — Smooth Subject Pans
+
+*   **Added eased lateral crop transitions.** Visually continuous TRACK-to-TRACK boundaries now pan over 0.4 seconds instead of jumping in one frame.
+*   **Preserved editorial cuts.** Hard source cuts and TRACK/LETTERBOX layout changes remain immediate.
+*   **Added `--pan-duration`.** Set the transition duration explicitly or use `0` to restore hard crop switches.
 
 #### v1.4.1 (2026-02-15) — Cropping Accuracy Fix
 
