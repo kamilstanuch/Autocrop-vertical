@@ -6,11 +6,13 @@
 
 # Python virtual environment
 .venv/
+.pan-lab-venv/
 __pycache__/
 *.pyc
 
 # Temporary files
 temp_*.mp4
+pan-lab-output*/
 
 # Build artifacts
 build/

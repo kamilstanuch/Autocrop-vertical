@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV="${ROOT}/.pan-lab-venv"
+
+if [[ ! -x "${VENV}/bin/python" ]]; then
+  echo "Setting up lightweight pan-lab environment..."
+  python3 -m venv "${VENV}"
+  "${VENV}/bin/pip" install --quiet --upgrade pip
+  "${VENV}/bin/pip" install --quiet \
+    "numpy>=1.24" \
+    "opencv-python-headless>=4.8,<5"
+fi
+
+cd "${ROOT}"
+exec "${VENV}/bin/python" scripts/pan_lab.py "$@"
