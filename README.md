@@ -26,6 +26,37 @@ The `yolov8n.pt` model weights are downloaded automatically on first run.
 
 ---
 
+### Local Pan Lab
+
+Use the lightweight pan lab when iterating on transition timing. It skips
+YOLO and scene detection, renders the production crop interpolation against
+four durations, and creates a side-by-side video plus a contact sheet.
+
+```bash
+# First run creates .pan-lab-venv with only OpenCV + NumPy.
+./scripts/pan-lab
+
+# Exercise a real clip around a known bad transition without rendering it all.
+./scripts/pan-lab \
+  --input /path/to/source.mp4 \
+  --boundary-sec 42.8 \
+  --from-x 360 \
+  --to-x 1480 \
+  --durations 0,0.25,0.4,0.65
+```
+
+Artifacts are written to `pan-lab-output/`:
+
+- `comparison.mp4` — all timing variants playing together
+- `contact-sheet.jpg` — transition frames aligned by timestamp
+- `report.json` — exact crop x-position for every rendered frame
+- `pan_*s.mp4` — individual variants
+
+For real clips, the lab renders only 1.5 seconds on either side of the
+boundary by default. Adjust that with `--window-sec`.
+
+---
+
 ### Usage Examples
 
 ```bash
