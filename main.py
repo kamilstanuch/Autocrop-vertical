@@ -396,6 +396,138 @@ def plan_pan_transitions(video_path, scenes_analysis, frame_width, frame_height,
 
     return scenes_analysis
 
+
+def summarize_pan_plan(scenes_analysis):
+    """Count boundary kinds so a render can prove pans were actually planned."""
+    summary = {
+        'scenes': len(scenes_analysis),
+        'track_to_track': 0,
+        'pan': 0,
+        'hold': 0,
+        'layout_switch': 0,
+    }
+    for i in range(1, len(scenes_analysis)):
+        previous, current = scenes_analysis[i - 1], scenes_analysis[i]
+        if previous.get('strategy') == 'TRACK' and current.get('strategy') == 'TRACK':
+            summary['track_to_track'] += 1
+        kind = current.get('boundary_kind')
+        if kind == 'pan':
+            summary['pan'] += 1
+        elif kind == 'hold':
+            summary['hold'] += 1
+        elif kind == 'layout-switch':
+            summary['layout_switch'] += 1
+    return summary
+
+
+def compute_output_size(frame_height):
+    """Even-dimension output size for the configured aspect ratio."""
+    output_height = frame_height + (frame_height % 2)
+    output_width = int(output_height * ASPECT_RATIO)
+    output_width += output_width % 2
+    return output_width, output_height
+
+
+def scene_index_for_frame(scenes_analysis, frame_number, current_index=0):
+    """Advance a sequential scene cursor so it covers frame_number."""
+    while current_index < len(scenes_analysis) - 1 and \
+            frame_number >= scenes_analysis[current_index + 1]['start_frame']:
+        current_index += 1
+    return current_index
+
+
+def resolve_frame_crop(scene_data, frame_number, frame_width, frame_height):
+    """Return (strategy, crop_box) for one source frame.
+
+    Single source of truth for per-frame crop placement. The production
+    encode loop, the unit tests, and scripts/pan_lab.py all call this so a
+    pan that works in the lab is the same pan that ships.
+    """
+    strategy = scene_data['strategy']
+    if strategy != 'TRACK':
+        return strategy, None
+    crop_box = calculate_crop_box(
+        scene_data['target_box'], frame_width, frame_height)
+    pan = scene_data.get('pan')
+    if pan:
+        scene_frame = frame_number - scene_data['start_frame']
+        if 0 <= scene_frame < pan['duration_frames']:
+            crop_width = crop_box[2] - crop_box[0]
+            x1 = interpolate_pan_x(
+                pan['from_x'],
+                pan['to_x'],
+                scene_frame,
+                pan['duration_frames'],
+                min_x=0,
+                max_x=max(0, frame_width - crop_width),
+            )
+            crop_box = (x1, 0, x1 + crop_width, frame_height)
+    return strategy, crop_box
+
+
+def render_output_frame(frame, scene_data, frame_number, frame_width,
+                        frame_height, output_width, output_height):
+    """Crop/letterbox one source frame according to the scene plan."""
+    import cv2
+    import numpy as np
+    strategy, crop_box = resolve_frame_crop(
+        scene_data, frame_number, frame_width, frame_height)
+    if strategy == 'TRACK':
+        processed = frame[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
+        return cv2.resize(processed, (output_width, output_height))
+
+    scale_factor = output_width / frame_width
+    scaled_height = int(frame_height * scale_factor)
+    scaled = cv2.resize(frame, (output_width, scaled_height))
+    output = np.zeros((output_height, output_width, 3), dtype=np.uint8)
+    y_offset = (output_height - scaled_height) // 2
+    output[y_offset:y_offset + scaled_height, :] = scaled
+    return output
+
+
+def plan_frame_crops(scenes_analysis, total_frames, frame_width, frame_height):
+    """Per-frame crop left edge for the whole plan (None for LETTERBOX)."""
+    positions = []
+    index = 0
+    for frame_number in range(total_frames):
+        index = scene_index_for_frame(scenes_analysis, frame_number, index)
+        _, crop_box = resolve_frame_crop(
+            scenes_analysis[index], frame_number, frame_width, frame_height)
+        positions.append(crop_box[0] if crop_box else None)
+    return positions
+
+
+def serialize_plan(scenes_analysis, frame_width, frame_height, fps, ratio):
+    """JSON-safe plan export consumed by scripts/pan_lab.py --plan."""
+    def plain(value):
+        if isinstance(value, (list, tuple)):
+            return [plain(v) for v in value]
+        if isinstance(value, dict):
+            return {k: plain(v) for k, v in value.items()}
+        if hasattr(value, 'item'):
+            return value.item()
+        return value
+
+    return {
+        'width': frame_width,
+        'height': frame_height,
+        'fps': fps,
+        'ratio': ratio,
+        'summary': summarize_pan_plan(scenes_analysis),
+        'scenes': [
+            {
+                'start_frame': int(s['start_frame']),
+                'end_frame': int(s['end_frame']),
+                'strategy': s['strategy'],
+                'target_box': plain(s.get('target_box')),
+                'boundary_kind': s.get('boundary_kind'),
+                'pan': plain(s.get('pan')),
+                'people': len(s.get('analysis', [])),
+            }
+            for s in scenes_analysis
+        ],
+    }
+
 def get_video_properties(video_path):
     """Returns (width, height, fps) from OpenCV — the same backend that reads frames."""
     import cv2
@@ -661,6 +793,10 @@ def cli():
                         help="Override FFmpeg x264 preset directly (ultrafast..veryslow). Overrides --quality.")
     parser.add_argument('--plan-only', action='store_true',
                         help="Only run scene detection and analysis (Steps 1-3), then print the processing plan without encoding.")
+    parser.add_argument('--plan-json', type=str, default=None,
+                        help="Write the scene/pan plan to this JSON file. Feed it to "
+                             "scripts/pan-lab --plan to re-render transitions locally "
+                             "without re-running scene detection or YOLO.")
     parser.add_argument('--frame-skip', type=int, default=0,
                         help="Frames to skip during scene detection (default: 0 = every frame, most accurate). "
                              "1 = every other frame (~2x faster). Higher = faster but may miss quick cuts.")
@@ -827,12 +963,7 @@ def cli():
     # frame-rate mismatches between the reader and encoder that cause audio drift.
     original_width, original_height, fps = get_video_properties(input_video)
     
-    OUTPUT_HEIGHT = original_height
-    if OUTPUT_HEIGHT % 2 != 0:
-        OUTPUT_HEIGHT += 1
-    OUTPUT_WIDTH = int(OUTPUT_HEIGHT * ASPECT_RATIO)
-    if OUTPUT_WIDTH % 2 != 0:
-        OUTPUT_WIDTH += 1
+    OUTPUT_WIDTH, OUTPUT_HEIGHT = compute_output_size(original_height)
 
     scenes_analysis = []
     for i, (start_time, end_time) in enumerate(tqdm(scenes, desc="Analyzing Scenes")):
@@ -886,6 +1017,23 @@ def cli():
               f"Found {num_people} person(s){motion_str}. Strategy: {strategy}"
               f"{transition_str}")
 
+    pan_summary = summarize_pan_plan(scenes_analysis)
+    print(f"   Transitions: {pan_summary['pan']} pan / {pan_summary['hold']} hold / "
+          f"{pan_summary['layout_switch']} layout-switch "
+          f"({pan_summary['track_to_track']} TRACK->TRACK boundaries, "
+          f"pan-duration {args.pan_duration:.2f}s)")
+    if pan_summary['track_to_track'] and not pan_summary['pan'] and args.pan_duration > 0:
+        print("   ⚠️  No pans planned despite TRACK->TRACK boundaries. Every crop "
+              "change will snap; inspect target boxes with --plan-json.")
+
+    if args.plan_json:
+        import json
+        with open(args.plan_json, 'w') as fh:
+            json.dump(serialize_plan(scenes_analysis, original_width,
+                                     original_height, fps, args.ratio),
+                      fh, indent=2)
+        print(f"   Plan written to {args.plan_json}")
+
     if args.plan_only:
         track_count = sum(1 for s in scenes_analysis if s['strategy'] == 'TRACK')
         letterbox_count = sum(1 for s in scenes_analysis if s['strategy'] == 'LETTERBOX')
@@ -926,47 +1074,19 @@ def cli():
             if not ret:
                 break
 
-            if current_scene_index < len(scenes_analysis) - 1 and \
-               frame_number >= scenes_analysis[current_scene_index + 1]['start_frame']:
-                current_scene_index += 1
+            next_index = scene_index_for_frame(
+                scenes_analysis, frame_number, current_scene_index)
+            if next_index != current_scene_index:
+                current_scene_index = next_index
                 pbar.set_description(f"Processing [scene {current_scene_index + 1}/{num_scenes}]")
 
             scene_data = scenes_analysis[current_scene_index]
-            strategy = scene_data['strategy']
-            target_box = scene_data['target_box']
 
             try:
-                if strategy == 'TRACK':
-                    crop_box = calculate_crop_box(target_box, original_width, original_height)
-                    pan = scene_data.get('pan')
-                    if pan:
-                        scene_frame = frame_number - scene_data['start_frame']
-                        if 0 <= scene_frame < pan['duration_frames']:
-                            crop_width = crop_box[2] - crop_box[0]
-                            x1 = interpolate_pan_x(
-                                pan['from_x'],
-                                pan['to_x'],
-                                scene_frame,
-                                pan['duration_frames'],
-                                min_x=0,
-                                max_x=max(0, original_width - crop_width),
-                            )
-                            crop_box = (
-                                x1,
-                                0,
-                                x1 + crop_width,
-                                original_height,
-                            )
-                    processed_frame = frame[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
-                    output_frame = cv2.resize(processed_frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
-                else:  # LETTERBOX
-                    scale_factor = OUTPUT_WIDTH / original_width
-                    scaled_height = int(original_height * scale_factor)
-                    scaled_frame = cv2.resize(frame, (OUTPUT_WIDTH, scaled_height))
-
-                    output_frame = np.zeros((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), dtype=np.uint8)
-                    y_offset = (OUTPUT_HEIGHT - scaled_height) // 2
-                    output_frame[y_offset:y_offset + scaled_height, :] = scaled_frame
+                output_frame = render_output_frame(
+                    frame, scene_data, frame_number,
+                    original_width, original_height,
+                    OUTPUT_WIDTH, OUTPUT_HEIGHT)
                 last_output_frame = output_frame
             except Exception:
                 dropped_frames += 1

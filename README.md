@@ -29,21 +29,33 @@ The `yolov8n.pt` model weights are downloaded automatically on first run.
 ### Local Pan Lab
 
 Use the lightweight pan lab when iterating on transition timing. It skips
-YOLO and scene detection, renders the production crop interpolation against
-four durations, and creates a side-by-side video plus a contact sheet.
+YOLO and scene detection but then runs the production code: the same
+`plan_pan_transitions` decides where pans happen and the same
+`render_output_frame` produces every pixel that the `autocrop` CLI writes.
+It renders four durations side by side and creates a contact sheet.
 
 ```bash
 # First run creates .pan-lab-venv with only OpenCV + NumPy.
 ./scripts/pan-lab
 
-# Exercise a real clip around a known bad transition without rendering it all.
+# Hand-specify a transition on a real clip without rendering all of it.
 ./scripts/pan-lab \
   --input /path/to/source.mp4 \
   --boundary-sec 42.8 \
   --from-x 360 \
   --to-x 1480 \
   --durations 0,0.25,0.4,0.65
+
+# Replay the real plan for a clip. Run analysis once (YOLO, scene detection),
+# then iterate on timing in seconds.
+python3 main.py -i source.mp4 -o /dev/null --plan-only --plan-json plan.json
+./scripts/pan-lab --input source.mp4 --plan plan.json --durations 0,0.3,0.4,0.6
 ```
+
+With `--plan`, the boundary defaults to the first planned pan; pass
+`--boundary-sec` to inspect a different one. `report.json` records the
+transition summary (`pan / hold / layout-switch`) for every variant, so a
+plan that yields zero pans is visible immediately.
 
 Artifacts are written to `pan-lab-output/`:
 
@@ -124,6 +136,7 @@ python3 main.py -i video.mp4 -o vertical.mp4 --frame-skip 0
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--plan-only` | off | Run scene detection + analysis only, print the plan, exit without encoding |
+| `--plan-json PATH` | off | Write the scene/pan plan to JSON (works with or without `--plan-only`). Replay it with `scripts/pan-lab --plan` |
 
 ---
 
@@ -224,6 +237,9 @@ This script is built on a pipeline that uses specialized libraries for each step
 *   **Fixed pans never running on real MP4s.** v1.5.0 gated pans on an OpenCV random-access seek plus a pixel-difference “hard cut” check. Those seeks are unreliable on production H.264, so almost every scene boundary scored as a hard cut and speaker switches stayed as jump cuts. Pans are now planned from TRACK crop geometry only.
 *   **TRACK-to-TRACK crop jumps ease over `--pan-duration`**, including speaker switches and over-segmented TRACK scenes. LETTERBOX layout switches stay instant. Small jitter is still skipped.
 *   **Clamped pan interpolation** so the crop window cannot leave the source frame during a transition.
+*   **One render path.** Per-frame crop placement now lives in `resolve_frame_crop` / `render_output_frame`, shared by the encode loop, the unit tests, and the pan lab, so the lab can no longer disagree with production.
+*   **Transition summary in the plan output** (`N pan / hold / layout-switch over M TRACK->TRACK boundaries`) plus a warning when TRACK boundaries exist but no pan was planned.
+*   **`--plan-json`** exports the scene/pan plan; `scripts/pan-lab --plan` replays it against the real clip through the production renderer without re-running YOLO.
 
 #### v1.5.0 — Smooth Subject Pans
 

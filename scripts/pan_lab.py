@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """Fast visual test bench for crop-pan behavior.
 
-This intentionally bypasses scene detection and YOLO. It exercises the same
-crop and interpolation helpers as production, making pan tuning a seconds-long
-local loop instead of a full model-assisted render.
+This bypasses scene detection and YOLO, but everything after that point is
+the production code path: `plan_pan_transitions` decides where pans happen
+and `render_output_frame` produces every output pixel, exactly as the
+`autocrop` CLI does. A pan that looks right here is the pan that ships.
+
+Two modes:
+
+  * Synthetic / hand-specified: a two-scene TRACK->TRACK plan built from
+    --from-x / --to-x / --boundary-sec (default: generated fixture).
+  * Replay: --plan <file> written by `autocrop --plan-json`, re-planned for
+    each requested --durations value and rendered around a chosen boundary of
+    the real clip given by --input.
 """
 
 import argparse
+import copy
 import json
 import math
 import sys
@@ -18,7 +28,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from main import calculate_crop_box_for_center, interpolate_pan_x  # noqa: E402
+import main as autocrop  # noqa: E402
 
 
 def parse_durations(value):
@@ -107,59 +117,85 @@ def read_video_info(path):
     return width, height, fps, total_frames
 
 
-def render_variant(source_path, output_path, duration_sec, from_center,
-                   to_center, boundary_frame, start_frame, end_frame):
-    width, height, fps, _ = read_video_info(source_path)
-    crop_width = int(height * 9 / 16)
-    if crop_width % 2:
-        crop_width += 1
-    output_height = height if height % 2 == 0 else height + 1
-    output_width = crop_width
-    from_x = calculate_crop_box_for_center(
-        from_center, width, height, crop_width)[0]
-    to_x = calculate_crop_box_for_center(
-        to_center, width, height, crop_width)[0]
-    duration_frames = max(1, int(round(duration_sec * fps)))
+def two_scene_plan(from_center, to_center, boundary_frame, total_frames,
+                   height):
+    """Hand-built TRACK->TRACK plan in the same shape `cli()` produces."""
+    return [
+        {
+            "start_frame": 0,
+            "end_frame": boundary_frame,
+            "strategy": "TRACK",
+            "target_box": [from_center, 0, from_center, height],
+        },
+        {
+            "start_frame": boundary_frame,
+            "end_frame": total_frames,
+            "strategy": "TRACK",
+            "target_box": [to_center, 0, to_center, height],
+        },
+    ]
+
+
+def load_plan(path):
+    payload = json.loads(Path(path).read_text())
+    ratio = payload.get("ratio", "9:16")
+    w, h = ratio.split(":")
+    autocrop.ASPECT_RATIO = int(w) / int(h)
+    return payload
+
+
+def pick_boundary_frame(scenes):
+    """First planned pan, else first TRACK->TRACK boundary, else first cut."""
+    for kind in ("pan", "hold"):
+        for scene in scenes[1:]:
+            if scene.get("boundary_kind") == kind:
+                return scene["start_frame"]
+    for previous, scene in zip(scenes, scenes[1:]):
+        if previous["strategy"] == "TRACK" and scene["strategy"] == "TRACK":
+            return scene["start_frame"]
+    if len(scenes) > 1:
+        return scenes[1]["start_frame"]
+    raise ValueError("Plan has a single scene; nothing to pan between.")
+
+
+def render_variant(source_path, output_path, scenes, duration_sec,
+                   width, height, fps, start_frame, end_frame):
+    """Re-plan `scenes` for one pan duration and render via production code."""
+    plan = copy.deepcopy(scenes)
+    autocrop.plan_pan_transitions(
+        None, plan, width, height, fps, pan_duration=duration_sec)
+    output_width, output_height = autocrop.compute_output_size(height)
 
     cap = cv2.VideoCapture(str(source_path))
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     writer = open_writer(output_path, fps, (output_width, output_height))
     positions = []
+    index = autocrop.scene_index_for_frame(plan, start_frame, 0)
 
-    for source_frame in range(start_frame, end_frame):
+    for frame_number in range(start_frame, end_frame):
         ok, frame = cap.read()
         if not ok:
             break
-        transition_offset = source_frame - boundary_frame
-        if transition_offset < 0:
-            crop_x = from_x
-        elif duration_sec == 0 or transition_offset >= duration_frames:
-            crop_x = to_x
-        else:
-            crop_x = interpolate_pan_x(
-                from_x, to_x, transition_offset, duration_frames)
-
-        cropped = frame[:, crop_x:crop_x + crop_width]
-        if output_height != height:
-            cropped = cv2.copyMakeBorder(
-                cropped, 0, output_height - height, 0, 0,
-                cv2.BORDER_REPLICATE)
-        cv2.putText(
-            cropped,
-            f"pan={duration_sec:.2f}s  crop_x={crop_x}",
-            (14, 32),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
+        index = autocrop.scene_index_for_frame(plan, frame_number, index)
+        scene = plan[index]
+        strategy, crop_box = autocrop.resolve_frame_crop(
+            scene, frame_number, width, height)
+        output = autocrop.render_output_frame(
+            frame, scene, frame_number, width, height,
+            output_width, output_height)
+        crop_x = crop_box[0] if crop_box else None
+        label = (
+            f"pan={duration_sec:.2f}s  {strategy.lower()}  "
+            f"x={'-' if crop_x is None else crop_x}"
         )
-        writer.write(cropped)
+        cv2.putText(output, label, (14, 32), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65, (255, 255, 255), 2, cv2.LINE_AA)
+        writer.write(output)
         positions.append(crop_x)
 
     cap.release()
     writer.release()
-    return positions, fps, (output_width, output_height)
+    return positions, autocrop.summarize_pan_plan(plan)
 
 
 def create_comparison(variant_paths, output_path, fps):
@@ -257,10 +293,16 @@ def main():
         "--input", type=Path,
         help="Optional real source clip. Omit to generate a synthetic fixture.")
     parser.add_argument(
+        "--plan", type=Path,
+        help="Plan JSON from `autocrop --plan-json`. Requires --input. Replays "
+             "the real scene plan through the production render path so no "
+             "scene detection or YOLO is needed.")
+    parser.add_argument(
         "--output-dir", type=Path, default=Path("pan-lab-output"))
     parser.add_argument(
         "--boundary-sec", type=float,
-        help="Source timestamp where the crop target changes. Defaults to midpoint.")
+        help="Source timestamp where the crop target changes. Defaults to the "
+             "midpoint, or to the first planned pan when --plan is given.")
     parser.add_argument(
         "--from-x", type=float,
         help="Starting crop center in source pixels. Defaults to 25%% width.")
@@ -284,14 +326,34 @@ def main():
 
     width, height, fps, total_frames = read_video_info(source_path)
     total_seconds = total_frames / fps
-    boundary_sec = (
-        args.boundary_sec if args.boundary_sec is not None else total_seconds / 2)
-    if not 0 < boundary_sec < total_seconds:
+
+    if args.plan:
+        if not args.input:
+            raise ValueError("--plan requires --input (the clip the plan was made from)")
+        plan_payload = load_plan(args.plan)
+        scenes = plan_payload["scenes"]
+        if [plan_payload.get("width"), plan_payload.get("height")] != [width, height]:
+            raise ValueError(
+                f"Plan is for {plan_payload.get('width')}x{plan_payload.get('height')} "
+                f"but --input is {width}x{height}")
+        if args.boundary_sec is not None:
+            boundary_frame = int(round(args.boundary_sec * fps))
+        else:
+            boundary_frame = pick_boundary_frame(scenes)
+        boundary_sec = boundary_frame / fps
+        from_center = to_center = None
+    else:
+        boundary_sec = (
+            args.boundary_sec if args.boundary_sec is not None else total_seconds / 2)
+        boundary_frame = int(round(boundary_sec * fps))
+        from_center = args.from_x if args.from_x is not None else width * 0.25
+        to_center = args.to_x if args.to_x is not None else width * 0.75
+        scenes = two_scene_plan(
+            from_center, to_center, boundary_frame, total_frames, height)
+
+    if not 0 < boundary_frame < total_frames:
         raise ValueError(
-            f"--boundary-sec must be inside the clip (0..{total_seconds:.2f})")
-    boundary_frame = int(round(boundary_sec * fps))
-    from_center = args.from_x if args.from_x is not None else width * 0.25
-    to_center = args.to_x if args.to_x is not None else width * 0.75
+            f"boundary must be inside the clip (0..{total_seconds:.2f}s)")
 
     if args.input:
         start_frame = max(0, boundary_frame - int(args.window_sec * fps))
@@ -304,31 +366,38 @@ def main():
     variants = []
     report = {
         "source": str(source_path),
+        "plan": str(args.plan.resolve()) if args.plan else None,
         "sourceSize": [width, height],
         "fps": fps,
         "sourceBoundarySec": boundary_sec,
         "fromCenterX": from_center,
         "toCenterX": to_center,
+        "renderedFrames": [start_frame, end_frame],
         "variants": {},
     }
     for duration in args.durations:
         label = str(duration).replace(".", "_")
         output_path = output_dir / f"pan_{label}s.mp4"
-        positions, _, _ = render_variant(
+        positions, summary = render_variant(
             source_path,
             output_path,
+            scenes,
             duration,
-            from_center,
-            to_center,
-            boundary_frame,
+            width,
+            height,
+            fps,
             start_frame,
             end_frame,
         )
         variants.append((duration, output_path))
         report["variants"][str(duration)] = {
             "video": str(output_path),
+            "planSummary": summary,
             "cropXByFrame": positions,
         }
+        print(f"pan={duration:.2f}s  planned {summary['pan']} pan / "
+              f"{summary['hold']} hold / {summary['layout_switch']} layout-switch "
+              f"over {summary['track_to_track']} TRACK->TRACK boundaries")
 
     comparison_path = output_dir / "comparison.mp4"
     contact_sheet_path = output_dir / "contact-sheet.jpg"
